@@ -1,0 +1,326 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import {
+  CodeMismatchException,
+  NotAuthorizedException,
+  UserNotConfirmedException,
+  UserNotFoundException,
+  UsernameExistsException,
+} from '@aws-sdk/client-cognito-identity-provider';
+import { FakeCognitoHelper, LocalCognitoUserRecord } from '@/FakeCognitoHelper';
+
+const username = 'user@example.com';
+const password = 'Password123!';
+const newPassword = 'NewPassword123!';
+
+describe('FakeCognitoHelper', () => {
+  test('sign up', async () => {
+    const { helper, cleanup } = createTestContext();
+
+    try {
+      const result = await helper.signUp({ username, password });
+
+      expect(result.confirmed).toBe(false);
+      expect(result.id).toEqual(expect.any(String));
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('duplicate username', async () => {
+    const { helper, cleanup } = createTestContext();
+
+    try {
+      await helper.signUp({ username, password });
+
+      expect(() => {
+        helper.signUp({ username, password });
+      }).toThrow(UsernameExistsException);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('unconfirmed login', async () => {
+    const { helper, cleanup } = createTestContext();
+
+    try {
+      await helper.signUp({ username, password });
+
+      expect(() => {
+        helper.login({ username, password });
+      }).toThrow(UserNotConfirmedException);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('confirm sign up and login', async () => {
+    const { helper, filePath, cleanup } = createTestContext();
+
+    try {
+      await signUpAndConfirmUser(helper, filePath, username, password);
+
+      const auth = await helper.login({ username, password });
+
+      expect(auth.accessToken).toMatch(/^fake-access-token-/);
+      expect(auth.refreshToken).toMatch(/^fake-refresh-token-/);
+      expect(auth.expiresIn).toBe(3600);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('confirm sign up wrong code', async () => {
+    const { helper, cleanup } = createTestContext();
+
+    try {
+      await helper.signUp({ username, password });
+
+      expect(() => {
+        helper.confirmSignUp({
+          username,
+          confirmationCode: '000000',
+        });
+      }).toThrow(CodeMismatchException);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('refresh token', async () => {
+    const { helper, filePath, cleanup } = createTestContext();
+
+    try {
+      await signUpAndConfirmUser(helper, filePath, username, password);
+
+      const loginResult = await helper.login({ username, password });
+      const refreshToken = getRequiredRefreshToken(loginResult.refreshToken);
+
+      const refreshResult = await helper.refreshToken({ refreshToken });
+
+      expect(refreshResult).toEqual({
+        accessToken: expect.stringMatching(/^fake-access-token-/),
+        expiresIn: 3600,
+      });
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('refresh token not found', async () => {
+    const { helper, cleanup } = createTestContext();
+
+    try {
+      await expect(
+        helper.refreshToken({ refreshToken: 'missing-token' }),
+      ).resolves.toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('admin get user by username', async () => {
+    const { helper, filePath, cleanup } = createTestContext();
+
+    try {
+      await helper.signUp({ username, password });
+
+      await expect(helper.adminGetUser({ username })).resolves.toEqual({
+        attributes: { email: username },
+      });
+
+      expect(readStoredUser(filePath, username).user.username).toBe(username);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('update email and verify email', async () => {
+    const { helper, filePath, cleanup } = createTestContext();
+
+    try {
+      await signUpAndConfirmUser(helper, filePath, username, password);
+
+      const auth = await helper.login({ username, password });
+      const accessToken = getRequiredAccessToken(auth.accessToken);
+
+      await helper.updateUserAttributes({
+        accessToken,
+        attributes: [{ Name: 'email', Value: 'next@example.com' }],
+      });
+
+      const updatedUser = readStoredUser(filePath, username);
+      const verifyCode = getRequiredCode(
+        updatedUser.verifyUserAttributeCodes?.email,
+        'Missing verify user attribute code in test storage',
+      );
+
+      expect(updatedUser.user.attributes.email).toBe('next@example.com');
+      expect(updatedUser.user.attributes.email_verified).toBe('false');
+
+      await helper.verifyUserAttribute({
+        attributeName: 'email',
+        code: verifyCode,
+        accessToken,
+      });
+
+      const verifiedUser = readStoredUser(filePath, username);
+
+      expect(verifiedUser.user.attributes.email_verified).toBe('true');
+      expect(verifiedUser.verifyUserAttributeCodes?.email).toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('forgot password and confirm forgot password', async () => {
+    const { helper, filePath, cleanup } = createTestContext();
+
+    try {
+      await signUpAndConfirmUser(helper, filePath, username, password);
+
+      await helper.forgotPassword({ username });
+
+      const forgotPasswordCode = getRequiredCode(
+        readStoredUser(filePath, username).forgotPasswordCode,
+        'Missing forgot password code in test storage',
+      );
+
+      await helper.confirmForgotPassword({
+        username,
+        confirmationCode: forgotPasswordCode,
+        password: newPassword,
+      });
+
+      const auth = await helper.login({
+        username,
+        password: newPassword,
+      });
+
+      expect(auth.accessToken).toMatch(/^fake-access-token-/);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('change password wrong previous password', async () => {
+    const { helper, filePath, cleanup } = createTestContext();
+
+    try {
+      await signUpAndConfirmUser(helper, filePath, username, password);
+
+      const { accessToken } = await helper.login({ username, password });
+      const requiredAccessToken = getRequiredAccessToken(accessToken);
+
+      expect(() => {
+        helper.changePassword({
+          previousPassword: 'WrongPassword123!',
+          proposedPassword: newPassword,
+          accessToken: requiredAccessToken,
+        });
+      }).toThrow(NotAuthorizedException);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test('get user by access token not found', () => {
+    const { helper, cleanup } = createTestContext();
+
+    try {
+      expect(() => {
+        helper.getUserByAccessToken('missing-access-token');
+      }).toThrow(UserNotFoundException);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+async function signUpAndConfirmUser(
+  helper: FakeCognitoHelper,
+  filePath: string,
+  username: string,
+  password: string,
+): Promise<void> {
+  await helper.signUp({ username, password });
+
+  const signUpCode = getRequiredCode(
+    readStoredUser(filePath, username).signUpCode,
+    'Missing sign up code in test storage',
+  );
+
+  await helper.confirmSignUp({
+    username,
+    confirmationCode: signUpCode,
+  });
+}
+
+function getRequiredCode(
+  value: string | undefined,
+  errorMessage: string,
+): string {
+  if (!value) {
+    throw new Error(errorMessage);
+  }
+
+  return value;
+}
+
+function getRequiredAccessToken(accessToken: string | undefined): string {
+  if (!accessToken) {
+    throw new Error('Missing access token in test result');
+  }
+
+  return accessToken;
+}
+
+function getRequiredRefreshToken(refreshToken: string | undefined): string {
+  if (!refreshToken) {
+    throw new Error('Missing refresh token in test result');
+  }
+
+  return refreshToken;
+}
+
+function createTestContext(): {
+  helper: FakeCognitoHelper;
+  filePath: string;
+  cleanup: () => void;
+} {
+  const dirPath = mkdtempSync(join(tmpdir(), 'fake-cognito-helper-'));
+  const previousCwd = process.cwd();
+  process.chdir(dirPath);
+  const filePath = join(dirPath, '.cognito-user-local.json');
+  const helper = new FakeCognitoHelper();
+
+  return {
+    helper,
+    filePath,
+    cleanup: () => {
+      process.chdir(previousCwd);
+      rmSync(dirPath, { recursive: true, force: true });
+    },
+  };
+}
+
+function readStoredUsers(filePath: string): LocalCognitoUserRecord[] {
+  return JSON.parse(readFileSync(filePath, 'utf8')) as LocalCognitoUserRecord[];
+}
+
+function readStoredUser(
+  filePath: string,
+  username: string,
+): LocalCognitoUserRecord {
+  const user = readStoredUsers(filePath).find((item) => {
+    return item.user.username === username;
+  });
+
+  if (!user) {
+    throw new Error(`User not found in test storage: ${username}`);
+  }
+
+  return user;
+}
