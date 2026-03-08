@@ -6,15 +6,16 @@ const config: Config = {
     tsconfig: '<rootDir>/tsconfig.jest.json',
   }),
   testEnvironment: 'node',
-  moduleNameMapper: pathsToModuleNameMapper(
-    {
-      '@/test/*': ['test/*'],
-      '@/*': ['src/*'],
-    },
-    {
-      prefix: '<rootDir>',
-    },
-  ),
+  moduleNameMapper:
+    pathsToModuleNameMapper(
+      {
+        '@/test/*': ['test/*'],
+        '@/*': ['src/*'],
+      },
+      {
+        prefix: '<rootDir>',
+      },
+    ) ?? {},
   moduleFileExtensions: ['js', 'ts'],
   roots: ['<rootDir>/test'],
   testMatch: ['**/*.test.ts'],

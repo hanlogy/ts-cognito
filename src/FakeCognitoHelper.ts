@@ -1,13 +1,15 @@
-import { randomUUID } from 'node:crypto';
+import { createSecretKey, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   CodeMismatchException,
+  InvalidParameterException,
   NotAuthorizedException,
   UserNotConfirmedException,
   UserNotFoundException,
   UsernameExistsException,
 } from '@aws-sdk/client-cognito-identity-provider';
+import { jwtVerify, SignJWT } from 'jose';
 import type {
   AdminGetUserParams,
   ChangePasswordParams,
@@ -35,6 +37,10 @@ import type {
 } from './types';
 import { toAttributeMap } from './helpers/toAttributeMap';
 
+const localJwtIssuer = 'http://localhost/fake-cognito';
+const localJwtClientId = 'fake-local-client-id';
+const localJwtExpiresInSeconds = 3600;
+
 export interface LocalCognitoUserRecord {
   user: {
     id: string;
@@ -44,7 +50,6 @@ export interface LocalCognitoUserRecord {
     attributes: Record<string, string>;
   };
   auth?: {
-    accessToken?: string;
     refreshToken?: string;
     expiresIn?: number;
   };
@@ -95,7 +100,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     });
   }
 
-  login({ username, password }: LoginParams): LoginResult {
+  async login({ username, password }: LoginParams): LoginResult {
     const record = this.findUserRecordByUsername(username);
 
     if (!record) {
@@ -110,11 +115,10 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       this.throwUserNotConfirmed();
     }
 
-    const auth = this.buildAuth();
+    const auth = await this.buildAuth(record);
     const nextRecord: LocalCognitoUserRecord = {
       ...record,
       auth: {
-        accessToken: auth.accessToken,
         refreshToken: auth.refreshToken,
         expiresIn: auth.expiresIn,
       },
@@ -122,34 +126,33 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
 
     this.saveUserRecord(nextRecord);
 
-    return Promise.resolve(auth);
+    return auth;
   }
 
-  refreshToken({ refreshToken }: RefreshTokenParams): RefreshTokenResult {
+  async refreshToken({ refreshToken }: RefreshTokenParams): RefreshTokenResult {
     const record = this.readUsers().find((currentRecord) => {
       return currentRecord.auth?.refreshToken === refreshToken;
     });
 
     if (!record) {
-      return Promise.resolve(undefined);
+      return undefined;
     }
 
-    const auth = this.buildAuth();
+    const auth = await this.buildAuth(record, refreshToken);
     const nextRecord: LocalCognitoUserRecord = {
       ...record,
       auth: {
-        accessToken: auth.accessToken,
-        refreshToken,
+        refreshToken: auth.refreshToken,
         expiresIn: auth.expiresIn,
       },
     };
 
     this.saveUserRecord(nextRecord);
 
-    return Promise.resolve({
-      accessToken: nextRecord.auth?.accessToken,
-      expiresIn: nextRecord.auth?.expiresIn,
-    });
+    return {
+      accessToken: auth.accessToken,
+      expiresIn: auth.expiresIn,
+    };
   }
 
   resendConfirmationCode({
@@ -159,6 +162,10 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
 
     if (!record) {
       this.throwUserNotFound();
+    }
+
+    if (record.user.confirmed) {
+      this.throwUserAlreadyConfirmed();
     }
 
     const nextRecord: LocalCognitoUserRecord = {
@@ -173,12 +180,12 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     });
   }
 
-  verifyUserAttribute({
+  async verifyUserAttribute({
     attributeName,
     code,
     accessToken,
   }: VerifyUserAttributeParams): VerifyUserAttributeResult {
-    const record = this.findUserRecordByAccessToken(accessToken);
+    const record = await this.findUserRecordByAccessToken(accessToken);
 
     if (!record) {
       this.throwUserNotFound();
@@ -215,9 +222,9 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
 
     this.saveUserRecord(nextRecord);
 
-    return Promise.resolve({
+    return {
       $metadata: {},
-    });
+    };
   }
 
   forgotPassword({ username }: ForgotPasswordParams): ForgotPasswordResult {
@@ -237,11 +244,11 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     return Promise.resolve();
   }
 
-  updateUserAttributes({
+  async updateUserAttributes({
     attributes,
     accessToken,
   }: UpdateUserAttributesParams): UpdateUserAttributesResult {
-    const record = this.findUserRecordByAccessToken(accessToken);
+    const record = await this.findUserRecordByAccessToken(accessToken);
 
     if (!record) {
       this.throwUserNotFound();
@@ -272,9 +279,9 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
 
     this.saveUserRecord(nextRecord);
 
-    return Promise.resolve({
+    return {
       $metadata: {},
-    });
+    };
   }
 
   confirmForgotPassword({
@@ -334,12 +341,12 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     });
   }
 
-  changePassword({
+  async changePassword({
     previousPassword,
     proposedPassword,
     accessToken,
   }: ChangePasswordParams): ChangePasswordResult {
-    const record = this.findUserRecordByAccessToken(accessToken);
+    const record = await this.findUserRecordByAccessToken(accessToken);
 
     if (!record) {
       this.throwUserNotFound();
@@ -359,9 +366,9 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
 
     this.saveUserRecord(nextRecord);
 
-    return Promise.resolve({
+    return {
       $metadata: {},
-    });
+    };
   }
 
   adminGetUser({ username }: AdminGetUserParams): GetUserResult {
@@ -378,22 +385,26 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     });
   }
 
-  getUserByAccessToken(accessToken: string): GetUserResult {
-    const record = this.findUserRecordByAccessToken(accessToken);
+  async getUserByAccessToken(accessToken: string): GetUserResult {
+    const record = await this.findUserRecordByAccessToken(accessToken);
 
     if (!record) {
       this.throwUserNotFound();
     }
 
-    return Promise.resolve({
+    return {
       attributes: {
         email: record.user.attributes.email,
       },
-    });
+    };
   }
 
   // ----
   private readonly filePath: string;
+
+  private readonly localJwtSecret = createSecretKey(
+    Buffer.from('local-fake-secret-'.padEnd(32, 'x'), 'utf8'),
+  );
 
   private isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
@@ -467,18 +478,6 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     return String(Math.floor(100000 + Math.random() * 900000));
   }
 
-  private buildAuth(): {
-    accessToken: string;
-    refreshToken: string;
-    expiresIn: number;
-  } {
-    return {
-      accessToken: `fake-access-token-${randomUUID()}`,
-      refreshToken: `fake-refresh-token-${randomUUID()}`,
-      expiresIn: 3600,
-    };
-  }
-
   private findUserRecordByUsername(
     username: string,
   ): LocalCognitoUserRecord | undefined {
@@ -487,12 +486,22 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     });
   }
 
-  private findUserRecordByAccessToken(
-    accessToken: string,
-  ): LocalCognitoUserRecord | undefined {
+  private findUserRecordById(id: string): LocalCognitoUserRecord | undefined {
     return this.readUsers().find((record) => {
-      return record.auth?.accessToken === accessToken;
+      return record.user.id === id;
     });
+  }
+
+  private async findUserRecordByAccessToken(
+    accessToken: string,
+  ): Promise<LocalCognitoUserRecord | undefined> {
+    const userId = await this.getUserIdFromAccessToken(accessToken);
+
+    if (!userId) {
+      return undefined;
+    }
+
+    return this.findUserRecordById(userId);
   }
 
   private saveUserRecord(nextRecord: LocalCognitoUserRecord): void {
@@ -551,5 +560,79 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     throw new NotAuthorizedException(
       this.buildExceptionData('Incorrect username or password.'),
     );
+  }
+
+  private throwUserAlreadyConfirmed(): never {
+    throw new InvalidParameterException(
+      this.buildExceptionData('User is already confirmed.'),
+    );
+  }
+
+  private async buildAuth(
+    record: LocalCognitoUserRecord,
+    refreshToken?: string,
+  ): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    expiresIn: number;
+  }> {
+    const expiresIn = localJwtExpiresInSeconds;
+
+    return {
+      accessToken: await this.buildAccessToken(record, expiresIn),
+      refreshToken: refreshToken ?? this.buildRefreshToken(),
+      expiresIn,
+    };
+  }
+
+  private async buildAccessToken(
+    record: LocalCognitoUserRecord,
+    expiresIn: number,
+  ): Promise<string> {
+    const nowInSeconds = Math.floor(Date.now() / 1000);
+
+    return await new SignJWT({
+      sub: record.user.id,
+      username: record.user.id,
+      token_use: 'access',
+      client_id: localJwtClientId,
+      auth_time: nowInSeconds,
+      scope: 'aws.cognito.signin.user.admin',
+    })
+      .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
+      .setIssuer(localJwtIssuer)
+      .setIssuedAt(nowInSeconds)
+      .setExpirationTime(nowInSeconds + expiresIn)
+      .sign(this.localJwtSecret);
+  }
+
+  private buildRefreshToken(): string {
+    return `fake-refresh-token-${randomUUID()}`;
+  }
+
+  private async getUserIdFromAccessToken(
+    accessToken: string,
+  ): Promise<string | undefined> {
+    try {
+      const { payload } = await jwtVerify(accessToken, this.localJwtSecret, {
+        issuer: localJwtIssuer,
+      });
+
+      if (typeof payload.sub !== 'string') {
+        return undefined;
+      }
+
+      if (payload.token_use !== 'access') {
+        return undefined;
+      }
+
+      if (payload.client_id !== localJwtClientId) {
+        return undefined;
+      }
+
+      return payload.sub;
+    } catch {
+      return undefined;
+    }
   }
 }
