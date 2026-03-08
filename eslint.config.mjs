@@ -84,4 +84,17 @@ export default defineConfig([
       ],
     },
   },
+  {
+    files: [
+      '**/*.test.ts',
+      '**/*.spec.ts',
+      'test/**/*.ts',
+      '__tests__/**/*.ts',
+    ],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/explicit-function-return-type': 'off',
+    },
+  },
 ]);

@@ -8,6 +8,37 @@ import {
   UserNotFoundException,
   UsernameExistsException,
 } from '@aws-sdk/client-cognito-identity-provider';
+
+const jwtVerifyMock = jest.fn();
+const signMock = jest.fn();
+
+jest.mock('jose', () => {
+  class SignJWT {
+    setProtectedHeader() {
+      return this;
+    }
+    setIssuer() {
+      return this;
+    }
+    setIssuedAt() {
+      return this;
+    }
+    setExpirationTime() {
+      return this;
+    }
+    sign() {
+      return signMock();
+    }
+  }
+
+  return {
+    jwtVerify: (...args: unknown[]) => {
+      return jwtVerifyMock(...args);
+    },
+    SignJWT,
+  };
+});
+
 import { FakeCognitoHelper, LocalCognitoUserRecord } from '@/FakeCognitoHelper';
 
 const username = 'user@example.com';
@@ -15,6 +46,18 @@ const password = 'Password123!';
 const newPassword = 'NewPassword123!';
 
 describe('FakeCognitoHelper', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    signMock.mockResolvedValue('fake-access-token');
+    jwtVerifyMock.mockResolvedValue({
+      payload: {
+        sub: 'mock-user-id',
+        token_use: 'access',
+        client_id: 'fake-local-client-id',
+      },
+    });
+  });
+
   test('sign up', async () => {
     const { helper, cleanup } = createTestContext();
 
@@ -34,9 +77,9 @@ describe('FakeCognitoHelper', () => {
     try {
       await helper.signUp({ username, password });
 
-      expect(() => {
-        helper.signUp({ username, password });
-      }).toThrow(UsernameExistsException);
+      await expect(async () => {
+        await helper.signUp({ username, password });
+      }).rejects.toThrow(UsernameExistsException);
     } finally {
       cleanup();
     }
@@ -48,9 +91,9 @@ describe('FakeCognitoHelper', () => {
     try {
       await helper.signUp({ username, password });
 
-      expect(() => {
-        helper.login({ username, password });
-      }).toThrow(UserNotConfirmedException);
+      await expect(helper.login({ username, password })).rejects.toThrow(
+        UserNotConfirmedException,
+      );
     } finally {
       cleanup();
     }
@@ -62,9 +105,18 @@ describe('FakeCognitoHelper', () => {
     try {
       await signUpAndConfirmUser(helper, filePath, username, password);
 
+      const storedUser = readStoredUser(filePath, username);
+      jwtVerifyMock.mockResolvedValue({
+        payload: {
+          sub: storedUser.user.id,
+          token_use: 'access',
+          client_id: 'fake-local-client-id',
+        },
+      });
+
       const auth = await helper.login({ username, password });
 
-      expect(auth.accessToken).toMatch(/^fake-access-token-/);
+      expect(auth.accessToken).toBe('fake-access-token');
       expect(auth.refreshToken).toMatch(/^fake-refresh-token-/);
       expect(auth.expiresIn).toBe(3600);
     } finally {
@@ -78,12 +130,12 @@ describe('FakeCognitoHelper', () => {
     try {
       await helper.signUp({ username, password });
 
-      expect(() => {
-        helper.confirmSignUp({
+      await expect(async () => {
+        await helper.confirmSignUp({
           username,
           confirmationCode: '000000',
         });
-      }).toThrow(CodeMismatchException);
+      }).rejects.toThrow(CodeMismatchException);
     } finally {
       cleanup();
     }
@@ -95,13 +147,22 @@ describe('FakeCognitoHelper', () => {
     try {
       await signUpAndConfirmUser(helper, filePath, username, password);
 
+      const storedUser = readStoredUser(filePath, username);
+      jwtVerifyMock.mockResolvedValue({
+        payload: {
+          sub: storedUser.user.id,
+          token_use: 'access',
+          client_id: 'fake-local-client-id',
+        },
+      });
+
       const loginResult = await helper.login({ username, password });
       const refreshToken = getRequiredRefreshToken(loginResult.refreshToken);
 
       const refreshResult = await helper.refreshToken({ refreshToken });
 
       expect(refreshResult).toEqual({
-        accessToken: expect.stringMatching(/^fake-access-token-/),
+        accessToken: 'fake-access-token',
         expiresIn: 3600,
       });
     } finally {
@@ -145,6 +206,15 @@ describe('FakeCognitoHelper', () => {
 
       const auth = await helper.login({ username, password });
       const accessToken = getRequiredAccessToken(auth.accessToken);
+
+      const storedUser = readStoredUser(filePath, username);
+      jwtVerifyMock.mockResolvedValue({
+        payload: {
+          sub: storedUser.user.id,
+          token_use: 'access',
+          client_id: 'fake-local-client-id',
+        },
+      });
 
       await helper.updateUserAttributes({
         accessToken,
@@ -199,7 +269,7 @@ describe('FakeCognitoHelper', () => {
         password: newPassword,
       });
 
-      expect(auth.accessToken).toMatch(/^fake-access-token-/);
+      expect(auth.accessToken).toBe('fake-access-token');
     } finally {
       cleanup();
     }
@@ -211,28 +281,39 @@ describe('FakeCognitoHelper', () => {
     try {
       await signUpAndConfirmUser(helper, filePath, username, password);
 
+      const storedUser = readStoredUser(filePath, username);
+      jwtVerifyMock.mockResolvedValue({
+        payload: {
+          sub: storedUser.user.id,
+          token_use: 'access',
+          client_id: 'fake-local-client-id',
+        },
+      });
+
       const { accessToken } = await helper.login({ username, password });
       const requiredAccessToken = getRequiredAccessToken(accessToken);
 
-      expect(() => {
+      await expect(
         helper.changePassword({
           previousPassword: 'WrongPassword123!',
           proposedPassword: newPassword,
           accessToken: requiredAccessToken,
-        });
-      }).toThrow(NotAuthorizedException);
+        }),
+      ).rejects.toThrow(NotAuthorizedException);
     } finally {
       cleanup();
     }
   });
 
-  test('get user by access token not found', () => {
+  test('get user by access token not found', async () => {
     const { helper, cleanup } = createTestContext();
 
     try {
-      expect(() => {
-        helper.getUserByAccessToken('missing-access-token');
-      }).toThrow(UserNotFoundException);
+      jwtVerifyMock.mockRejectedValue(new Error('Invalid token'));
+
+      await expect(
+        helper.getUserByAccessToken('missing-access-token'),
+      ).rejects.toThrow(UserNotFoundException);
     } finally {
       cleanup();
     }
@@ -299,7 +380,7 @@ function createTestContext(): {
   return {
     helper,
     filePath,
-    cleanup: () => {
+    cleanup: (): void => {
       process.chdir(previousCwd);
       rmSync(dirPath, { recursive: true, force: true });
     },
