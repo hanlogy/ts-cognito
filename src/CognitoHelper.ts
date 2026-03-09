@@ -22,6 +22,7 @@ import type {
   ConfirmForgotPasswordResult,
   ConfirmSignUpParams,
   ConfirmSignUpResult,
+  DecodeAccessTokenResult,
   ForgotPasswordParams,
   ForgotPasswordResult,
   GetUserResult,
@@ -35,10 +36,12 @@ import type {
   SignUpResult,
   UpdateUserAttributesParams,
   UpdateUserAttributesResult,
+  VerifyAccessTokenResult,
   VerifyUserAttributeParams,
   VerifyUserAttributeResult,
 } from './types';
 import { toAttributeMap } from './helpers/toAttributeMap';
+import { createRemoteJWKSet, decodeJwt, jwtVerify } from 'jose';
 
 export class CognitoHelper implements CognitoHelperInterface {
   constructor({
@@ -47,9 +50,17 @@ export class CognitoHelper implements CognitoHelperInterface {
     this.client = client ?? new CognitoIdentityProviderClient({});
     this.userPoolClientId = this.getRequiredEnv('USER_POOL_CLIENT_ID');
     this.userPoolId = this.getRequiredEnv('USER_POOL_ID');
+    this.region =
+      process.env.AWS_REGION ?? this.getRequiredEnv('COGNITO_REGION');
+    this.issuer = `https://cognito-idp.${this.region}.amazonaws.com/${this.userPoolId}`;
+    this.jwks = createRemoteJWKSet(
+      new URL(`${this.issuer}/.well-known/jwks.json`),
+    );
   }
 
-  private getRequiredEnv(name: 'USER_POOL_CLIENT_ID' | 'USER_POOL_ID'): string {
+  private getRequiredEnv(
+    name: 'USER_POOL_CLIENT_ID' | 'USER_POOL_ID' | 'COGNITO_REGION',
+  ): string {
     const value = process.env[name];
 
     if (!value) {
@@ -62,6 +73,9 @@ export class CognitoHelper implements CognitoHelperInterface {
   client: CognitoIdentityProviderClient;
   userPoolClientId: string;
   userPoolId: string;
+  region: string;
+  issuer: string;
+  jwks: ReturnType<typeof createRemoteJWKSet>;
 
   async verifyUserAttribute({
     attributeName,
@@ -241,5 +255,64 @@ export class CognitoHelper implements CognitoHelperInterface {
         email: attributes.email,
       },
     };
+  }
+
+  async verifyAccessToken(
+    accessToken: string,
+  ): Promise<VerifyAccessTokenResult> {
+    try {
+      const {
+        payload: { sub, token_use, client_id, exp },
+      } = await jwtVerify(accessToken, this.jwks, {
+        issuer: this.issuer,
+        algorithms: ['RS256'],
+      });
+
+      if (typeof sub !== 'string') {
+        return {
+          isValid: false,
+        };
+      }
+
+      if (token_use !== 'access') {
+        return {
+          isValid: false,
+        };
+      }
+
+      if (client_id !== this.userPoolClientId) {
+        return {
+          isValid: false,
+        };
+      }
+
+      return {
+        isValid: true,
+        payload: { sub, exp: typeof exp === 'number' ? exp : undefined },
+      };
+    } catch {
+      return {
+        isValid: false,
+      };
+    }
+  }
+
+  decodeAccessToken(accessToken: string): DecodeAccessTokenResult | undefined {
+    try {
+      const payload = decodeJwt(accessToken);
+
+      if (typeof payload.sub !== 'string') {
+        return undefined;
+      }
+
+      const { sub, exp } = payload;
+
+      return {
+        sub,
+        exp: typeof exp === 'number' ? exp : undefined,
+      };
+    } catch {
+      return undefined;
+    }
   }
 }

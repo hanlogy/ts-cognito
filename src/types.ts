@@ -109,6 +109,21 @@ export interface GetUserResultData {
   };
 }
 
+export interface DecodeAccessTokenResult {
+  sub: string;
+  exp?: number | undefined;
+}
+
+export type VerifyAccessTokenResult =
+  | {
+      isValid: false;
+      payload?: undefined;
+    }
+  | {
+      isValid: true;
+      payload: DecodeAccessTokenResult;
+    };
+
 export type GetUserResult = Promise<GetUserResultData>;
 
 export interface CognitoHelperInterface {
@@ -143,4 +158,7 @@ export interface CognitoHelperInterface {
   adminGetUser(params: AdminGetUserParams): GetUserResult;
 
   getUserByAccessToken(accessToken: string): GetUserResult;
+
+  verifyAccessToken(accessToken: string): Promise<VerifyAccessTokenResult>;
+  decodeAccessToken(accessToken: string): DecodeAccessTokenResult | undefined;
 }
