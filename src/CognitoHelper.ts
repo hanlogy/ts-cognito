@@ -41,7 +41,12 @@ import type {
   VerifyUserAttributeResult,
 } from './types';
 import { toAttributeMap } from './helpers/toAttributeMap';
-import { createRemoteJWKSet, decodeJwt, jwtVerify } from 'jose';
+import { createRemoteJWKSet, jwtVerify, JWTVerifyGetKey } from 'jose';
+import {
+  JwtVerifyResult,
+  verifyAccessToken,
+} from './helpers/verifyAccessToken';
+import { decodeAccessToken } from './helpers/decodeAccessToken';
 
 export class CognitoHelper implements CognitoHelperInterface {
   constructor({
@@ -75,7 +80,7 @@ export class CognitoHelper implements CognitoHelperInterface {
   userPoolId: string;
   region: string;
   issuer: string;
-  jwks: ReturnType<typeof createRemoteJWKSet>;
+  jwks: JWTVerifyGetKey;
 
   async verifyUserAttribute({
     attributeName,
@@ -260,59 +265,18 @@ export class CognitoHelper implements CognitoHelperInterface {
   async verifyAccessToken(
     accessToken: string,
   ): Promise<VerifyAccessTokenResult> {
-    try {
-      const {
-        payload: { sub, token_use, client_id, exp },
-      } = await jwtVerify(accessToken, this.jwks, {
-        issuer: this.issuer,
-        algorithms: ['RS256'],
-      });
-
-      if (typeof sub !== 'string') {
-        return {
-          isValid: false,
-        };
-      }
-
-      if (token_use !== 'access') {
-        return {
-          isValid: false,
-        };
-      }
-
-      if (client_id !== this.userPoolClientId) {
-        return {
-          isValid: false,
-        };
-      }
-
-      return {
-        isValid: true,
-        payload: { sub, exp: typeof exp === 'number' ? exp : undefined },
-      };
-    } catch {
-      return {
-        isValid: false,
-      };
-    }
+    return await verifyAccessToken({
+      clientId: this.userPoolClientId,
+      verifier: async (): Promise<JwtVerifyResult> => {
+        return await jwtVerify(accessToken, this.jwks, {
+          issuer: this.issuer,
+          algorithms: ['RS256'],
+        });
+      },
+    });
   }
 
   decodeAccessToken(accessToken: string): DecodeAccessTokenResult | undefined {
-    try {
-      const payload = decodeJwt(accessToken);
-
-      if (typeof payload.sub !== 'string') {
-        return undefined;
-      }
-
-      const { sub, exp } = payload;
-
-      return {
-        sub,
-        exp: typeof exp === 'number' ? exp : undefined,
-      };
-    } catch {
-      return undefined;
-    }
+    return decodeAccessToken(accessToken);
   }
 }
