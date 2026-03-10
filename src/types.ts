@@ -114,14 +114,27 @@ export interface DecodeAccessTokenResult {
   exp?: number | undefined;
 }
 
+export type VerifyAccessFailedReason =
+  | 'unknown'
+  | 'expired'
+  | 'signatureVerificationFailed'
+  | 'claimValidationFailed'
+  | 'invalidSub'
+  | 'invalidTokenUse'
+  | 'invalidClientId';
+
 export type VerifyAccessTokenResult =
   | {
       isValid: false;
       payload?: undefined;
+      error: {
+        code: VerifyAccessFailedReason;
+      };
     }
   | {
       isValid: true;
       payload: DecodeAccessTokenResult;
+      error?: undefined;
     };
 
 export type GetUserResult = Promise<GetUserResultData>;

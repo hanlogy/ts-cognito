@@ -39,7 +39,13 @@ jest.mock('jose', () => {
   };
 });
 
-import { FakeCognitoHelper, LocalCognitoUserRecord } from '@/FakeCognitoHelper';
+jest.mock('../src/helpers/decodeAccessToken', () => ({
+  decodeAccessToken: jest.fn(),
+}));
+
+import { FakeCognitoHelper } from '@/FakeCognitoHelper';
+import { decodeAccessToken } from '../src/helpers/decodeAccessToken';
+import { LocalCognitoUserRecord } from '@/helpers/JsonFileStorage';
 
 const username = 'user@example.com';
 const password = 'Password123!';
@@ -56,6 +62,7 @@ describe('FakeCognitoHelper', () => {
         client_id: 'fake-local-client-id',
       },
     });
+    (decodeAccessToken as jest.Mock).mockReturnValue(undefined); // default
   });
 
   test('sign up', async () => {
@@ -118,7 +125,7 @@ describe('FakeCognitoHelper', () => {
 
       expect(auth.accessToken).toBe('fake-access-token');
       expect(auth.refreshToken).toMatch(/^fake-refresh-token-/);
-      expect(auth.expiresIn).toBe(3600);
+      expect(auth.expiresIn).toBe(900);
     } finally {
       cleanup();
     }
@@ -163,7 +170,7 @@ describe('FakeCognitoHelper', () => {
 
       expect(refreshResult).toEqual({
         accessToken: 'fake-access-token',
-        expiresIn: 3600,
+        expiresIn: 900,
       });
     } finally {
       cleanup();
@@ -214,6 +221,10 @@ describe('FakeCognitoHelper', () => {
           token_use: 'access',
           client_id: 'fake-local-client-id',
         },
+      });
+
+      (decodeAccessToken as jest.Mock).mockReturnValue({
+        sub: storedUser.user.id,
       });
 
       await helper.updateUserAttributes({
@@ -292,6 +303,10 @@ describe('FakeCognitoHelper', () => {
 
       const { accessToken } = await helper.login({ username, password });
       const requiredAccessToken = getRequiredAccessToken(accessToken);
+
+      (decodeAccessToken as jest.Mock).mockReturnValue({
+        sub: storedUser.user.id,
+      });
 
       await expect(
         helper.changePassword({

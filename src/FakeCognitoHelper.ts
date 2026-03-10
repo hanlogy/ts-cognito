@@ -7,7 +7,7 @@ import {
   UserNotFoundException,
   UsernameExistsException,
 } from '@aws-sdk/client-cognito-identity-provider';
-import { decodeJwt, jwtVerify, SignJWT } from 'jose';
+import { jwtVerify, SignJWT } from 'jose';
 import type {
   AdminGetUserParams,
   ChangePasswordParams,
@@ -40,6 +40,11 @@ import {
   JsonFileStorage,
   type LocalCognitoUserRecord,
 } from './helpers/JsonFileStorage';
+import {
+  JwtVerifyResult,
+  verifyAccessToken,
+} from './helpers/verifyAccessToken';
+import { decodeAccessToken } from './helpers/decodeAccessToken';
 
 const localJwtIssuer = 'http://localhost/fake-cognito';
 const localJwtClientId = 'fake-local-client-id';
@@ -388,32 +393,18 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
   async verifyAccessToken(
     accessToken: string,
   ): Promise<VerifyAccessTokenResult> {
-    const payload = await this.decodeVerifiedAccessToken(accessToken);
-
-    if (!payload) {
-      return {
-        isValid: false,
-      };
-    }
-
-    return {
-      isValid: true,
-      payload,
-    };
+    return await verifyAccessToken({
+      clientId: localJwtClientId,
+      verifier: async (): Promise<JwtVerifyResult> => {
+        return await jwtVerify(accessToken, this.localJwtSecret, {
+          issuer: localJwtIssuer,
+        });
+      },
+    });
   }
 
   decodeAccessToken(accessToken: string): DecodeAccessTokenResult | undefined {
-    try {
-      const { sub, exp } = decodeJwt(accessToken);
-
-      if (typeof sub !== 'string') {
-        return undefined;
-      }
-
-      return { sub, exp: typeof exp === 'number' ? exp : undefined };
-    } catch {
-      return undefined;
-    }
+    return decodeAccessToken(accessToken);
   }
 
   // ----
@@ -557,41 +548,12 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     return `fake-refresh-token-${randomUUID()}`;
   }
 
-  private async decodeVerifiedAccessToken(
-    accessToken: string,
-  ): Promise<DecodeAccessTokenResult | undefined> {
-    try {
-      const { payload } = await jwtVerify(accessToken, this.localJwtSecret, {
-        issuer: localJwtIssuer,
-      });
-
-      if (typeof payload.sub !== 'string') {
-        return undefined;
-      }
-
-      if (payload.token_use !== 'access') {
-        return undefined;
-      }
-
-      if (payload.client_id !== localJwtClientId) {
-        return undefined;
-      }
-
-      return {
-        sub: payload.sub,
-        exp: typeof payload.exp === 'number' ? payload.exp : undefined,
-      };
-    } catch {
-      return undefined;
-    }
-  }
-
   // Extract user id from verified access token.
   private async getUserIdFromAccessToken(
     accessToken: string,
   ): Promise<string | undefined> {
-    const decoded = await this.decodeVerifiedAccessToken(accessToken);
+    const decoded = this.decodeAccessToken(accessToken);
 
-    return decoded?.sub;
+    return await Promise.resolve(decoded?.sub);
   }
 }
