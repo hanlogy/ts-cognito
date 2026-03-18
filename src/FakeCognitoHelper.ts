@@ -48,14 +48,18 @@ import { decodeAccessToken } from './helpers/decodeAccessToken';
 
 const localJwtIssuer = 'http://localhost/fake-cognito';
 const localJwtClientId = 'fake-local-client-id';
-const localJwtExpiresInSeconds = 60 * 15; // 15 minutes
 
 export class FakeCognitoHelper implements CognitoHelperInterface {
-  constructor({ filePath }: { filePath?: string } = {}) {
+  constructor({
+    filePath,
+    accessTokenExpiresIn = 60 * 15, // 15 minutes
+  }: { filePath?: string; accessTokenExpiresIn?: number } = {}) {
     this.storage = new JsonFileStorage({ filePath });
+    this.accessTokenExpiresIn = accessTokenExpiresIn;
   }
 
   private readonly storage: JsonFileStorage;
+  private accessTokenExpiresIn: number;
 
   signUp({ username, password }: SignUpParams): SignUpResult {
     const existingUser = this.storage.findByUsername(username);
@@ -514,7 +518,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     refreshToken: string;
     expiresIn: number;
   }> {
-    const expiresIn = localJwtExpiresInSeconds;
+    const expiresIn = this.accessTokenExpiresIn;
 
     return {
       accessToken: await this.buildAccessToken(record, expiresIn),
