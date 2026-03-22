@@ -390,7 +390,7 @@ function createTestContext(): {
   const previousCwd = process.cwd();
   process.chdir(dirPath);
   const filePath = join(dirPath, '.cognito-user-local.json');
-  const helper = new FakeCognitoHelper();
+  const helper = FakeCognitoHelper.withJsonFileStorage();
 
   return {
     helper,
