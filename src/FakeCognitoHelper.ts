@@ -74,7 +74,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
 
   constructor({
     storage,
-    accessTokenExpiresIn = 60 * 15, // 15 minutes
+    accessTokenExpiresIn = 60 * 60 * 24, // 24 hours
     fixedCode,
     signInType = 'emailAlias',
   }: {
