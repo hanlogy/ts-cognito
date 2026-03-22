@@ -45,7 +45,7 @@ jest.mock('../src/helpers/decodeAccessToken', () => ({
 
 import { FakeCognitoHelper } from '@/FakeCognitoHelper';
 import { decodeAccessToken } from '../src/helpers/decodeAccessToken';
-import { LocalCognitoUserRecord } from '@/helpers/JsonFileStorage';
+import { LocalCognitoRecord } from '@/helpers/JsonFileStorage';
 
 const username = 'user@example.com';
 const password = 'Password123!';
@@ -389,7 +389,7 @@ function createTestContext(): {
   const dirPath = mkdtempSync(join(tmpdir(), 'fake-cognito-helper-'));
   const previousCwd = process.cwd();
   process.chdir(dirPath);
-  const filePath = join(dirPath, '.cognito-user-local.json');
+  const filePath = join(dirPath, '.cognito-local.json');
   const helper = FakeCognitoHelper.withJsonFileStorage();
 
   return {
@@ -402,14 +402,14 @@ function createTestContext(): {
   };
 }
 
-function readStoredUsers(filePath: string): LocalCognitoUserRecord[] {
-  return JSON.parse(readFileSync(filePath, 'utf8')) as LocalCognitoUserRecord[];
+function readStoredUsers(filePath: string): LocalCognitoRecord[] {
+  return JSON.parse(readFileSync(filePath, 'utf8')) as LocalCognitoRecord[];
 }
 
 function readStoredUser(
   filePath: string,
   username: string,
-): LocalCognitoUserRecord {
+): LocalCognitoRecord {
   const user = readStoredUsers(filePath).find((item) => {
     return item.user.username === username;
   });

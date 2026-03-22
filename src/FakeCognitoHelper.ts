@@ -38,7 +38,7 @@ import type {
 import { toAttributeMap } from './helpers/toAttributeMap';
 import {
   JsonFileStorage,
-  type LocalCognitoUserRecord,
+  type LocalCognitoRecord,
 } from './helpers/JsonFileStorage';
 import type { Storage } from './helpers/Storage';
 import {
@@ -72,7 +72,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     accessTokenExpiresIn = 60 * 15, // 15 minutes
     fixedCode,
   }: {
-    storage: Storage<LocalCognitoUserRecord>;
+    storage: Storage<LocalCognitoRecord>;
     accessTokenExpiresIn?: number;
     fixedCode?: string;
   }) {
@@ -81,7 +81,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     this.fixedCode = fixedCode;
   }
 
-  private readonly storage: Storage<LocalCognitoUserRecord>;
+  private readonly storage: Storage<LocalCognitoRecord>;
   private accessTokenExpiresIn: number;
   private readonly fixedCode: string | undefined;
 
@@ -92,7 +92,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       this.throwUsernameExists();
     }
 
-    const userRecord: LocalCognitoUserRecord = {
+    const userRecord: LocalCognitoRecord = {
       user: {
         id: randomUUID(),
         username,
@@ -131,7 +131,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     }
 
     const auth = await this.buildAuth(record);
-    const nextRecord: LocalCognitoUserRecord = {
+    const nextRecord: LocalCognitoRecord = {
       ...record,
       auth: {
         refreshToken: auth.refreshToken,
@@ -152,7 +152,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     }
 
     const auth = await this.buildAuth(record, refreshToken);
-    const nextRecord: LocalCognitoUserRecord = {
+    const nextRecord: LocalCognitoRecord = {
       ...record,
       auth: {
         refreshToken: auth.refreshToken,
@@ -181,7 +181,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       this.throwUserAlreadyConfirmed();
     }
 
-    const nextRecord: LocalCognitoUserRecord = {
+    const nextRecord: LocalCognitoRecord = {
       ...record,
       signUpCode: this.buildCode(),
     };
@@ -224,7 +224,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       nextAttributes.email_verified = 'true';
     }
 
-    const nextRecord: LocalCognitoUserRecord = {
+    const nextRecord: LocalCognitoRecord = {
       ...record,
       user: {
         ...record.user,
@@ -249,7 +249,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       this.throwUserNotFound();
     }
 
-    const nextRecord: LocalCognitoUserRecord = {
+    const nextRecord: LocalCognitoRecord = {
       ...record,
       forgotPasswordCode: this.buildCode(),
     };
@@ -281,7 +281,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       nextVerifyUserAttributeCodes.email = this.buildCode();
     }
 
-    const nextRecord: LocalCognitoUserRecord = {
+    const nextRecord: LocalCognitoRecord = {
       ...record,
       user: {
         ...record.user,
@@ -371,7 +371,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       this.throwNotAuthorized();
     }
 
-    const nextRecord: LocalCognitoUserRecord = {
+    const nextRecord: LocalCognitoRecord = {
       ...record,
       user: {
         ...record.user,
@@ -438,14 +438,14 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
 
   private async findByUsername(
     username: string,
-  ): Promise<LocalCognitoUserRecord | undefined> {
+  ): Promise<LocalCognitoRecord | undefined> {
     const all = await this.storage.list();
     return all.find((r) => r.user.username === username);
   }
 
   private async findByRefreshToken(
     refreshToken: string,
-  ): Promise<LocalCognitoUserRecord | undefined> {
+  ): Promise<LocalCognitoRecord | undefined> {
     const all = await this.storage.list();
     return all.find((r) => r.auth?.refreshToken === refreshToken);
   }
@@ -461,17 +461,15 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     );
   }
 
-  private removeSignUpCode(
-    record: LocalCognitoUserRecord,
-  ): LocalCognitoUserRecord {
+  private removeSignUpCode(record: LocalCognitoRecord): LocalCognitoRecord {
     const { signUpCode: _signUpCode, ...restRecord } = record;
 
     return restRecord;
   }
 
   private removeForgotPasswordCode(
-    record: LocalCognitoUserRecord,
-  ): LocalCognitoUserRecord {
+    record: LocalCognitoRecord,
+  ): LocalCognitoRecord {
     const { forgotPasswordCode: _forgotPasswordCode, ...restRecord } = record;
 
     return restRecord;
@@ -485,7 +483,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
 
   private async findUserRecordByAccessToken(
     accessToken: string,
-  ): Promise<LocalCognitoUserRecord | undefined> {
+  ): Promise<LocalCognitoRecord | undefined> {
     const userId = this.getUserIdFromAccessToken(accessToken);
 
     if (!userId) {
@@ -547,7 +545,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
   }
 
   private async buildAuth(
-    record: LocalCognitoUserRecord,
+    record: LocalCognitoRecord,
     refreshToken?: string,
   ): Promise<{
     accessToken: string;
@@ -564,7 +562,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
   }
 
   private async buildAccessToken(
-    record: LocalCognitoUserRecord,
+    record: LocalCognitoRecord,
     expiresIn: number,
   ): Promise<string> {
     const nowInSeconds = Math.floor(Date.now() / 1000);
