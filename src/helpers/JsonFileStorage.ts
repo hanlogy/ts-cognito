@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Storage } from './Storage';
 
-export interface LocalCognitoUserRecord {
+export interface LocalCognitoRecord {
   user: {
     id: string;
     username: string;
@@ -19,10 +19,9 @@ export interface LocalCognitoUserRecord {
   verifyUserAttributeCodes?: Record<string, string>;
 }
 
-export class JsonFileStorage implements Storage<LocalCognitoUserRecord> {
+export class JsonFileStorage implements Storage<LocalCognitoRecord> {
   constructor({ filePath }: { filePath?: string | undefined } = {}) {
-    this.filePath =
-      filePath ?? resolve(process.cwd(), '.cognito-user-local.json');
+    this.filePath = filePath ?? resolve(process.cwd(), '.cognito-local.json');
 
     if (!existsSync(this.filePath)) {
       writeFileSync(this.filePath, '[]', 'utf8');
@@ -32,13 +31,13 @@ export class JsonFileStorage implements Storage<LocalCognitoUserRecord> {
   }
 
   private readonly filePath: string;
-  private data: LocalCognitoUserRecord[] = [];
+  private data: LocalCognitoRecord[] = [];
 
-  get(key: string): Promise<LocalCognitoUserRecord | undefined> {
+  get(key: string): Promise<LocalCognitoRecord | undefined> {
     return Promise.resolve(this.data.find((item) => item.user.id === key));
   }
 
-  put(key: string, value: LocalCognitoUserRecord): Promise<void> {
+  put(key: string, value: LocalCognitoRecord): Promise<void> {
     const index = this.data.findIndex((item) => item.user.id === key);
 
     if (index === -1) {
@@ -59,11 +58,11 @@ export class JsonFileStorage implements Storage<LocalCognitoUserRecord> {
     return Promise.resolve();
   }
 
-  list(): Promise<LocalCognitoUserRecord[]> {
+  list(): Promise<LocalCognitoRecord[]> {
     return Promise.resolve(this.data);
   }
 
-  private loadData(): LocalCognitoUserRecord[] {
+  private loadData(): LocalCognitoRecord[] {
     const content = readFileSync(this.filePath, 'utf8');
     const parsed: unknown = JSON.parse(content);
 
@@ -71,12 +70,12 @@ export class JsonFileStorage implements Storage<LocalCognitoUserRecord> {
       throw new Error('JsonFileStorage file content must be an array');
     }
 
-    return parsed.filter((item): item is LocalCognitoUserRecord => {
+    return parsed.filter((item): item is LocalCognitoRecord => {
       return this.isLocalCognitoData(item);
     });
   }
 
-  private isLocalCognitoData(value: unknown): value is LocalCognitoUserRecord {
+  private isLocalCognitoData(value: unknown): value is LocalCognitoRecord {
     if (!this.isRecord(value)) {
       return false;
     }
