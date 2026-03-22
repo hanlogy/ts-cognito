@@ -40,6 +40,7 @@ import {
   JsonFileStorage,
   type LocalCognitoUserRecord,
 } from './helpers/JsonFileStorage';
+import type { Storage } from './helpers/Storage';
 import {
   JwtVerifyResult,
   verifyAccessToken,
@@ -50,19 +51,42 @@ const localJwtIssuer = 'http://localhost/fake-cognito';
 const localJwtClientId = 'fake-local-client-id';
 
 export class FakeCognitoHelper implements CognitoHelperInterface {
-  constructor({
+  static withJsonFileStorage({
     filePath,
-    accessTokenExpiresIn = 60 * 15, // 15 minutes
-  }: { filePath?: string; accessTokenExpiresIn?: number } = {}) {
-    this.storage = new JsonFileStorage({ filePath });
-    this.accessTokenExpiresIn = accessTokenExpiresIn;
+    accessTokenExpiresIn,
+    fixedCode,
+  }: {
+    filePath?: string;
+    accessTokenExpiresIn?: number;
+    fixedCode?: string;
+  } = {}): FakeCognitoHelper {
+    return new FakeCognitoHelper({
+      storage: new JsonFileStorage({ filePath }),
+      ...(accessTokenExpiresIn !== undefined && { accessTokenExpiresIn }),
+      ...(fixedCode !== undefined && { fixedCode }),
+    });
   }
 
-  private readonly storage: JsonFileStorage;
-  private accessTokenExpiresIn: number;
+  constructor({
+    storage,
+    accessTokenExpiresIn = 60 * 15, // 15 minutes
+    fixedCode,
+  }: {
+    storage: Storage<LocalCognitoUserRecord>;
+    accessTokenExpiresIn?: number;
+    fixedCode?: string;
+  }) {
+    this.storage = storage;
+    this.accessTokenExpiresIn = accessTokenExpiresIn;
+    this.fixedCode = fixedCode;
+  }
 
-  signUp({ username, password }: SignUpParams): SignUpResult {
-    const existingUser = this.storage.findByUsername(username);
+  private readonly storage: Storage<LocalCognitoUserRecord>;
+  private accessTokenExpiresIn: number;
+  private readonly fixedCode: string | undefined;
+
+  async signUp({ username, password }: SignUpParams): SignUpResult {
+    const existingUser = await this.findByUsername(username);
 
     if (existingUser) {
       this.throwUsernameExists();
@@ -83,17 +107,16 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       verifyUserAttributeCodes: {},
     };
 
-    // Save through shared storage.
-    this.storage.add(userRecord);
+    await this.storage.put(userRecord.user.id, userRecord);
 
-    return Promise.resolve({
+    return {
       id: userRecord.user.id,
       confirmed: userRecord.user.confirmed,
-    });
+    };
   }
 
   async login({ username, password }: LoginParams): LoginResult {
-    const record = this.storage.findByUsername(username);
+    const record = await this.findByUsername(username);
 
     if (!record) {
       this.throwUserNotFound();
@@ -116,14 +139,13 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       },
     };
 
-    this.storage.update(nextRecord);
+    await this.storage.put(nextRecord.user.id, nextRecord);
 
     return auth;
   }
 
   async refreshToken({ refreshToken }: RefreshTokenParams): RefreshTokenResult {
-    // Read refresh token from shared storage cache.
-    const record = this.storage.findByRefreshToken(refreshToken);
+    const record = await this.findByRefreshToken(refreshToken);
 
     if (!record) {
       return undefined;
@@ -138,7 +160,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       },
     };
 
-    this.storage.update(nextRecord);
+    await this.storage.put(nextRecord.user.id, nextRecord);
 
     return {
       accessToken: auth.accessToken,
@@ -146,10 +168,10 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     };
   }
 
-  resendConfirmationCode({
+  async resendConfirmationCode({
     username,
   }: ResendConfirmationCodeParams): ResendConfirmationCodeResult {
-    const record = this.storage.findByUsername(username);
+    const record = await this.findByUsername(username);
 
     if (!record) {
       this.throwUserNotFound();
@@ -164,11 +186,11 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       signUpCode: this.buildCode(),
     };
 
-    this.storage.update(nextRecord);
+    await this.storage.put(nextRecord.user.id, nextRecord);
 
-    return Promise.resolve({
+    return {
       $metadata: {},
-    });
+    };
   }
 
   async verifyUserAttribute({
@@ -211,15 +233,17 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       verifyUserAttributeCodes: nextVerifyUserAttributeCodes,
     };
 
-    this.storage.update(nextRecord);
+    await this.storage.put(nextRecord.user.id, nextRecord);
 
     return {
       $metadata: {},
     };
   }
 
-  forgotPassword({ username }: ForgotPasswordParams): ForgotPasswordResult {
-    const record = this.storage.findByUsername(username);
+  async forgotPassword({
+    username,
+  }: ForgotPasswordParams): ForgotPasswordResult {
+    const record = await this.findByUsername(username);
 
     if (!record) {
       this.throwUserNotFound();
@@ -230,9 +254,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       forgotPasswordCode: this.buildCode(),
     };
 
-    this.storage.update(nextRecord);
-
-    return Promise.resolve();
+    await this.storage.put(nextRecord.user.id, nextRecord);
   }
 
   async updateUserAttributes({
@@ -268,19 +290,19 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       verifyUserAttributeCodes: nextVerifyUserAttributeCodes,
     };
 
-    this.storage.update(nextRecord);
+    await this.storage.put(nextRecord.user.id, nextRecord);
 
     return {
       $metadata: {},
     };
   }
 
-  confirmForgotPassword({
+  async confirmForgotPassword({
     username,
     confirmationCode,
     password,
   }: ConfirmForgotPasswordParams): ConfirmForgotPasswordResult {
-    const record = this.storage.findByUsername(username);
+    const record = await this.findByUsername(username);
 
     if (!record) {
       this.throwUserNotFound();
@@ -298,16 +320,14 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       },
     });
 
-    this.storage.update(nextRecord);
-
-    return Promise.resolve();
+    await this.storage.put(nextRecord.user.id, nextRecord);
   }
 
-  confirmSignUp({
+  async confirmSignUp({
     username,
     confirmationCode,
   }: ConfirmSignUpParams): ConfirmSignUpResult {
-    const record = this.storage.findByUsername(username);
+    const record = await this.findByUsername(username);
 
     if (!record) {
       this.throwUserNotFound();
@@ -329,11 +349,11 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       },
     });
 
-    this.storage.update(nextRecord);
+    await this.storage.put(nextRecord.user.id, nextRecord);
 
-    return Promise.resolve({
+    return {
       $metadata: {},
-    });
+    };
   }
 
   async changePassword({
@@ -359,25 +379,25 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       },
     };
 
-    this.storage.update(nextRecord);
+    await this.storage.put(nextRecord.user.id, nextRecord);
 
     return {
       $metadata: {},
     };
   }
 
-  adminGetUser({ username }: AdminGetUserParams): GetUserResult {
-    const record = this.storage.findByUsername(username);
+  async adminGetUser({ username }: AdminGetUserParams): GetUserResult {
+    const record = await this.findByUsername(username);
 
     if (!record) {
       this.throwUserNotFound();
     }
 
-    return Promise.resolve({
+    return {
       attributes: {
         email: record.user.attributes.email,
       },
-    });
+    };
   }
 
   async getUserByAccessToken(accessToken: string): GetUserResult {
@@ -416,6 +436,20 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     Buffer.from('local-fake-secret-'.padEnd(32, 'x'), 'utf8'),
   );
 
+  private async findByUsername(
+    username: string,
+  ): Promise<LocalCognitoUserRecord | undefined> {
+    const all = await this.storage.list();
+    return all.find((r) => r.user.username === username);
+  }
+
+  private async findByRefreshToken(
+    refreshToken: string,
+  ): Promise<LocalCognitoUserRecord | undefined> {
+    const all = await this.storage.list();
+    return all.find((r) => r.auth?.refreshToken === refreshToken);
+  }
+
   private removeVerifyUserAttributeCode(
     verifyUserAttributeCodes: Record<string, string>,
     attributeName: string,
@@ -444,19 +478,21 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
   }
 
   private buildCode(): string {
-    return String(Math.floor(100000 + Math.random() * 900000));
+    return (
+      this.fixedCode ?? String(Math.floor(100000 + Math.random() * 900000))
+    );
   }
 
   private async findUserRecordByAccessToken(
     accessToken: string,
   ): Promise<LocalCognitoUserRecord | undefined> {
-    const userId = await this.getUserIdFromAccessToken(accessToken);
+    const userId = this.getUserIdFromAccessToken(accessToken);
 
     if (!userId) {
       return undefined;
     }
 
-    return this.storage.findById(userId);
+    return await this.storage.get(userId);
   }
 
   private buildExceptionData(message: string): {
@@ -552,12 +588,9 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     return `fake-refresh-token-${randomUUID()}`;
   }
 
-  // Extract user id from verified access token.
-  private async getUserIdFromAccessToken(
-    accessToken: string,
-  ): Promise<string | undefined> {
+  private getUserIdFromAccessToken(accessToken: string): string | undefined {
     const decoded = this.decodeAccessToken(accessToken);
 
-    return await Promise.resolve(decoded?.sub);
+    return decoded?.sub;
   }
 }

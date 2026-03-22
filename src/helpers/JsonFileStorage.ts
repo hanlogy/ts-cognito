@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import type { Storage } from './Storage';
 
 export interface LocalCognitoUserRecord {
   user: {
@@ -18,7 +19,7 @@ export interface LocalCognitoUserRecord {
   verifyUserAttributeCodes?: Record<string, string>;
 }
 
-export class JsonFileStorage {
+export class JsonFileStorage implements Storage<LocalCognitoUserRecord> {
   constructor({ filePath }: { filePath?: string | undefined } = {}) {
     this.filePath =
       filePath ?? resolve(process.cwd(), '.cognito-user-local.json');
@@ -33,24 +34,33 @@ export class JsonFileStorage {
   private readonly filePath: string;
   private data: LocalCognitoUserRecord[] = [];
 
-  public findById(id: string): LocalCognitoUserRecord | undefined {
-    return this.data.find((item) => {
-      return item.user.id === id;
-    });
+  get(key: string): Promise<LocalCognitoUserRecord | undefined> {
+    return Promise.resolve(this.data.find((item) => item.user.id === key));
   }
 
-  public findByUsername(username: string): LocalCognitoUserRecord | undefined {
-    return this.data.find((item) => {
-      return item.user.username === username;
-    });
+  put(key: string, value: LocalCognitoUserRecord): Promise<void> {
+    const index = this.data.findIndex((item) => item.user.id === key);
+
+    if (index === -1) {
+      this.data.push(value);
+    } else {
+      this.data[index] = value;
+    }
+
+    this.save();
+
+    return Promise.resolve();
   }
 
-  public findByRefreshToken(
-    refreshToken: string,
-  ): LocalCognitoUserRecord | undefined {
-    return this.data.find((item) => {
-      return item.auth?.refreshToken === refreshToken;
-    });
+  delete(key: string): Promise<void> {
+    this.data = this.data.filter((item) => item.user.id !== key);
+    this.save();
+
+    return Promise.resolve();
+  }
+
+  list(): Promise<LocalCognitoUserRecord[]> {
+    return Promise.resolve(this.data);
   }
 
   private loadData(): LocalCognitoUserRecord[] {
@@ -64,29 +74,6 @@ export class JsonFileStorage {
     return parsed.filter((item): item is LocalCognitoUserRecord => {
       return this.isLocalCognitoData(item);
     });
-  }
-
-  public add(item: LocalCognitoUserRecord): void {
-    const existedUser = this.findById(item.user.id);
-    if (existedUser) {
-      throw new Error(`User already exists: ${item.user.id}`);
-    }
-
-    this.data.push(item);
-    this.save();
-  }
-
-  public update(item: LocalCognitoUserRecord): void {
-    const index = this.data.findIndex((currentItem) => {
-      return currentItem.user.id === item.user.id;
-    });
-
-    if (index === -1) {
-      throw new Error(`User not found: ${item.user.id}`);
-    }
-
-    this.data[index] = item;
-    this.save();
   }
 
   private isLocalCognitoData(value: unknown): value is LocalCognitoUserRecord {
