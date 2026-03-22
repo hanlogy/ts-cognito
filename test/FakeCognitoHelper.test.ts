@@ -199,7 +199,9 @@ describe('FakeCognitoHelper', () => {
         attributes: { email: username },
       });
 
-      expect(readStoredUser(filePath, username).user.username).toBe(username);
+      expect(readStoredUser(filePath, username).user.attributes.email).toBe(
+        username,
+      );
     } finally {
       cleanup();
     }
@@ -232,7 +234,7 @@ describe('FakeCognitoHelper', () => {
         attributes: [{ Name: 'email', Value: 'next@example.com' }],
       });
 
-      const updatedUser = readStoredUser(filePath, username);
+      const updatedUser = readStoredUser(filePath, 'next@example.com');
       const verifyCode = getRequiredCode(
         updatedUser.verifyUserAttributeCodes?.email,
         'Missing verify user attribute code in test storage',
@@ -247,7 +249,7 @@ describe('FakeCognitoHelper', () => {
         accessToken,
       });
 
-      const verifiedUser = readStoredUser(filePath, username);
+      const verifiedUser = readStoredUser(filePath, 'next@example.com');
 
       expect(verifiedUser.user.attributes.email_verified).toBe('true');
       expect(verifiedUser.verifyUserAttributeCodes?.email).toBeUndefined();
@@ -411,7 +413,7 @@ function readStoredUser(
   username: string,
 ): LocalCognitoRecord {
   const user = readStoredUsers(filePath).find((item) => {
-    return item.user.username === username;
+    return item.user.attributes.email === username;
   });
 
   if (!user) {
