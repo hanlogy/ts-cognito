@@ -54,29 +54,36 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
   static withJsonFileStorage({
     filePath,
     accessTokenExpiresIn,
+    fixedCode,
   }: {
     filePath?: string;
     accessTokenExpiresIn?: number;
+    fixedCode?: string;
   } = {}): FakeCognitoHelper {
     return new FakeCognitoHelper({
       storage: new JsonFileStorage({ filePath }),
       ...(accessTokenExpiresIn !== undefined && { accessTokenExpiresIn }),
+      ...(fixedCode !== undefined && { fixedCode }),
     });
   }
 
   constructor({
     storage,
     accessTokenExpiresIn = 60 * 15, // 15 minutes
+    fixedCode,
   }: {
     storage: Storage<LocalCognitoUserRecord>;
     accessTokenExpiresIn?: number;
+    fixedCode?: string;
   }) {
     this.storage = storage;
     this.accessTokenExpiresIn = accessTokenExpiresIn;
+    this.fixedCode = fixedCode;
   }
 
   private readonly storage: Storage<LocalCognitoUserRecord>;
   private accessTokenExpiresIn: number;
+  private readonly fixedCode: string | undefined;
 
   async signUp({ username, password }: SignUpParams): SignUpResult {
     const existingUser = await this.findByUsername(username);
@@ -471,7 +478,9 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
   }
 
   private buildCode(): string {
-    return String(Math.floor(100000 + Math.random() * 900000));
+    return (
+      this.fixedCode ?? String(Math.floor(100000 + Math.random() * 900000))
+    );
   }
 
   private async findUserRecordByAccessToken(
