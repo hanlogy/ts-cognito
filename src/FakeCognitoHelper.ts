@@ -50,40 +50,49 @@ import { decodeAccessToken } from './helpers/decodeAccessToken';
 const localJwtIssuer = 'http://localhost/fake-cognito';
 const localJwtClientId = 'fake-local-client-id';
 
+export type SignInType = 'emailAlias';
+
 export class FakeCognitoHelper implements CognitoHelperInterface {
   static withJsonFileStorage({
     filePath,
     accessTokenExpiresIn,
     fixedCode,
+    signInType,
   }: {
     filePath?: string;
     accessTokenExpiresIn?: number;
     fixedCode?: string;
+    signInType?: SignInType;
   } = {}): FakeCognitoHelper {
     return new FakeCognitoHelper({
       storage: new JsonFileStorage({ filePath }),
       ...(accessTokenExpiresIn !== undefined && { accessTokenExpiresIn }),
       ...(fixedCode !== undefined && { fixedCode }),
+      ...(signInType !== undefined && { signInType }),
     });
   }
 
   constructor({
     storage,
-    accessTokenExpiresIn = 60 * 15, // 15 minutes
+    accessTokenExpiresIn = 60 * 60 * 24, // 24 hours
     fixedCode,
+    signInType = 'emailAlias',
   }: {
     storage: Storage<LocalCognitoRecord>;
     accessTokenExpiresIn?: number;
     fixedCode?: string;
+    signInType?: SignInType;
   }) {
     this.storage = storage;
     this.accessTokenExpiresIn = accessTokenExpiresIn;
     this.fixedCode = fixedCode;
+    this.signInType = signInType;
   }
 
   private readonly storage: Storage<LocalCognitoRecord>;
   private accessTokenExpiresIn: number;
   private readonly fixedCode: string | undefined;
+  private readonly signInType: SignInType;
 
   async signUp({ username, password }: SignUpParams): SignUpResult {
     const existingUser = await this.findByUsername(username);
@@ -92,10 +101,11 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
       this.throwUsernameExists();
     }
 
+    const id = randomUUID();
     const userRecord: LocalCognitoRecord = {
       user: {
-        id: randomUUID(),
-        username,
+        id,
+        username: this.signInType === 'emailAlias' ? id : username,
         password,
         confirmed: false,
         attributes: {
@@ -440,6 +450,11 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
     username: string,
   ): Promise<LocalCognitoRecord | undefined> {
     const all = await this.storage.list();
+
+    if (this.signInType === 'emailAlias') {
+      return all.find((r) => r.user.attributes.email === username);
+    }
+
     return all.find((r) => r.user.username === username);
   }
 
@@ -569,7 +584,7 @@ export class FakeCognitoHelper implements CognitoHelperInterface {
 
     return await new SignJWT({
       sub: record.user.id,
-      username: record.user.id,
+      username: record.user.username,
       token_use: 'access',
       client_id: localJwtClientId,
       auth_time: nowInSeconds,
